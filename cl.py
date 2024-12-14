@@ -39,15 +39,15 @@ class TokenKind:
 @dataclass
 class Token:
     kind:  TokenKind = TokenKind.undefined
-    start: Position  = field(default_factory=Position())
-    end:   Position  = field(default_factory=Position())
+    start: Position  = field(default_factory=Position)
+    end:   Position  = field(default_factory=Position)
 
 @dataclass
 class Lexer:
     path: str = ""
     text: str = ""
 
-    pos: Position = field(default_factory=Position())
+    pos: Position = field(default_factory=Position)
 
     char_index: int = 0
     curr_char: str = ""
@@ -64,15 +64,49 @@ class Ins:
 
     count: int = iota()
 
+@dataclass
+class Parser:
+    lexer:      Lexer = field(default_factory=Lexer)
+    prev_token: Token = field(default_factory=Token)
+    curr_token: Token = field(default_factory=Token)
+
+@dataclass
+class Ast:
+    _types: list = field(default_factory=[])
+    _macros: list = field(default_factory=[])
+    _globals: list = field(default_factory=[])
+    _functions: list = field(default_factory=[])
+
 def usage() -> None:
     print("Usage: python cl.py [file]")
-    print("    file - path to source file, with `.mcs` extension")
+    print("    file - path to source file, with `.sc` extension")
 
 def error(msg: str, errcode: int = 1, showusage: bool = True) -> None:
     print(f"ERROR: {msg}")
     if showusage:
         usage()
     sys.exit(errcode)
+
+def lexer_get_token(token: Token, lexer: Lexer) -> str:
+    return lexer.text[token.start.offset:token.end.offset]
+
+def lexer_token_info(token: Token, lexer: Lexer) -> str:
+    return f"{lexer.path}:{token.start.line}:{token.start.column}"
+
+def lexer_error(msg: str, token: Token, lexer: Lexer) -> None:
+    error(f"{lexer_token_info(token, lexer)}: {msg} while lexing!")
+
+def parser_get_token(parser: Parser) -> str:
+    return parser.lexer.text[parser.curr_token.start.offset:parser.curr_token.end.offset]
+
+def parser_token_info(parser: Parser) -> str:
+    return f"{parser.lexer.path}:{parser.curr_token.start.line}:{parser.curr_token.start.column}"
+
+def parser_error(msg: str, parser: Parser) -> None:
+    error(f"{parser_token_info(parser)}: {msg} while parsing!")
+
+def parser_unimplemented_error(parser: Parser) -> None:
+    parser_error(f"Encountered unimplemented token `{parser_get_token(parser)}` ({parser.curr_token.kind})", parser)
 
 def waring(msg: str, showusage: bool = False) -> None:
     print(f"WARING: {msg}")
@@ -160,9 +194,9 @@ def lexer_next_token(lexer: Lexer) -> Token:
             lexer_advance(lexer)
         return Token(TokenKind.label, pos, deepcopy(lexer.pos))
     else:
-        error(f"Encountered an invalid token `{lexer.curr_char}` while lexing!")
+        lexer_error(f"Encountered an invalid token `{lexer.curr_char}`!")
 
-def lex_file(lexer: Lexer) -> list[Token]:
+def lex_entire_file(lexer: Lexer) -> list[Token]:
     tokens: list = []
     token: Token = lexer_next_token(lexer)
     while isinstance(token, Token):
@@ -170,55 +204,70 @@ def lex_file(lexer: Lexer) -> list[Token]:
         token = lexer_next_token(lexer)
     return tokens
 
-def parser(tokens: list, lexer: Lexer) -> list:
-    call_stack: list = []
-    work_stack: list = []
-    ast: list = []
-    i: int = 0
-    while i < len(tokens):
-        token: Token = tokens[i]
-        if token.kind == TokenKind.plus:
-            assert False, "Not implemented!"
-        elif token.kind == TokenKind.dollar:
-            i += 1
-            if i >= len(tokens):
-                error(f"Expacted more tokens after token `$` ({TokenKind.dollar}) while parsing!")
-            token = tokens[i]
-            if token.kind != TokenKind.label:
-                error(f"Expacted token of kind `label` ({TokenKind.label}) after token `$` ({TokenKind.dollar}), but found token of kind ({token.kind}) while parsing!")
-            macro_call: tuple = (Ins.macro_call, lexer.text[token.start.offset:token.end.offset], [])
-            ast.append(macro_call)
-            call_stack.append(macro_call)
-        elif token.kind == TokenKind.colon:
-            while len(stack) > 0:
-                ast.append(stack.pop())
-        elif token.kind == TokenKind.l_paren:
-            work_stack.append((Ins.l_paren,))
-        elif token.kind == TokenKind.r_paren:
-            if ast[-1][0] == Ins.macro_call:
-                while work_stack[-1][0] != Ins.l_paren:
-                    ast[-1][2].append(work_stack.pop())
-            else:
-                while work_stack[-1][0] != Ins.l_paren:
-                    ast.append(work_stack.pop())
-        elif token.kind == TokenKind.digits:
-            assert False, "Not implemented!"
-        elif token.kind == TokenKind.label:
-            assert False, "Not implemented!"
+def parser_next(parser: Parser) -> None:
+    parser.prev_token = parser.curr_token
+    parser.curr_token = lexer_next_token(parser.lexer)
+
+def parser_new(path: str) -> Parser:
+    parser: Parser = Parser(lexer_new(path), Token(), Token())
+    parser_next(parser)
+    return parser
+
+def parser_get_token(parser: Parser) -> str:
+    return parser.lexer.text[parser.curr_token.start.offset:parser.curr_token.end.offset]
+
+def parser_get_macro_call(parser: Parser) -> tuple:
+    parser_next(parser)
+    macro: list = [Ins.macro_call,]
+    if parser.curr_token != TokenKind.label:
+        parser_error(f"Expacted token ({TokenKind.label}) after token ({TokenKind.dollar}), but found token ({parser.curr_token.kind})", parser)
+    macro.append(parser_get_token(parser))
+    token: Token = deepcopy(parser.prev_token)
+    parser_next(parser)
+    if parser.curr_token
+    return macro
+
+def parser_expact_tokens(parser: Parser, tokens: tuple[TokenKind]) -> bool:
+    parser_state: Parser = deepcopy(parser)
+    result: bool = True
+    for token in tokens:
+        parser_next(parser)
+    if result:
+        return True
+    parser.lexer = pareser_state.lexer
+    paresr.prev_char = parser_state.prev_char
+    parser.curr_char = parser_state.curr_char
+    return False
+
+def parser_parse(parser: Parser) -> Ast:
+    if TokenKind.count != 8:
+        parser_error(f"Unimplemented tokens TokenKind.count: {TokenKind.count}", parser)
+    ast: Ast = Ast([], [], [])
+    while parser.curr_token:
+        if parser.curr_token.kind == TokenKind.undefined:
+            parser_error(f"Encountered undefined token `{parser_get_token(parser)}` ({parser.curr_token.kind})!", parser)
+        elif parser.curr_token.kind == TokenKind.plus:
+            parser_unimplemented_error(parser)
+        elif parser.curr_token.kind == TokenKind.dollar:
+            # encoutered macro call $ label (l_paren (arguemnt (comma ...)) r_paren)
+            parser_unimplemented_error(parser)
+        elif parser.curr_token.kind == TokenKind.colon:
+            parser_unimplemented_error(parser)
+        elif parser.curr_token.kind == TokenKind.l_paren:
+            parser_unimplemented_error(parser)
+        elif parser.curr_token.kind == TokenKind.r_paren:
+            parser_unimplemented_error(parser)
+        elif parser.curr_token.kind == TokenKind.label:
+            parser_unimplemented_error(parser)
+        elif parser.curr_token.kind == TokenKind.digits:
+            parser_unimplemented_error(parser)
         else:
-            error(f"Encountered an invalide token `{lexer.text[token.start.offset:token.end.offset]}` while parsing!")
-        i += 1
-    if len(stack) > 0:
-        ast.append(stack.pop())
+            parser_error(f"Encountered invalid token `{parser_get_token(parser)}` ({parser.curr_token.kind})", parser)
+        parser_next(parser)
     return ast
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         error("To few input arguments given, please provide more input arguments!")
-    lexer: Lexer = lexer_new(sys.argv[1])
-    tokens: list = lex_file(lexer)
-    ast: list = parser(tokens, lexer)
-
-    print(TokenKind())
-    for token in tokens:
-        print(token)
+    parser: Parser = parser_new(sys.argv[1])
+    ast: Ast = parser_parse(parser)
